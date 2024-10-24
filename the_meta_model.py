@@ -217,7 +217,7 @@ def plot_confusion_matrix(y_true, y_pred, labels):
     plt.show()
 
 if __name__ == "__main__":
-    fred_api_key = 'e27aeafdd08f0e92830315de82579e94'   # Replace with your FRED API key
+    fred_api_key = 'your_API_key'   # Replace with your FRED API key
     X, y = prepare_data_for_model(fred_api_key)
 
     # Train the model using GP tuning
