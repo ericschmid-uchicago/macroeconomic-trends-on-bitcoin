@@ -1,0 +1,11 @@
+fredapi==0.5.2
+giotto_tda==0.6.2
+matplotlib==3.7.2
+numpy==1.24.3
+pandas==2.0.3
+scikit_learn==1.5.2
+scikit_optimize==0.10.2
+scipy==1.14.1
+seaborn==0.13.2
+xgboost==2.1.2
+yfinance==0.2.46
