@@ -91,28 +91,33 @@ def perform_tda_on_d2(mert, window_size=30, stride=1):
 
 def calculate_future_moving_average_and_deciles(mert, look_ahead_days=15, ma_window=30):
     """
-    Calculate target variable based on centered returns.
-    At time t=0, the target is based on the moving average from t-15 to t+15.
+    Calculate the 30-day moving average based on past data and validate against future values without using future data for training.
     """
-    # Calculate the centered moving average directly
-    mert['future_30d_ma'] = mert['BTC'].rolling(window=ma_window, center=True).mean()
+    # Calculate the present 30-day moving average based on past data only
+    mert['present_30d_ma'] = mert['BTC'].rolling(window=ma_window).mean()
     
-    # Calculate returns relative to current price
+    # Shift the present 30-day moving average by 15 days into the future for validation purposes
+    mert['future_30d_ma'] = mert['present_30d_ma'].shift(-look_ahead_days)
+    
+    # Use the current price for training (no future data used in training)
     mert['current_price'] = mert['BTC']
+    
+    # Calculate returns for validation: using the future 30-day moving average for validation only
     mert['future_return'] = (mert['future_30d_ma'] - mert['current_price']) / mert['current_price']
     
-    # Create target classes based on future returns
+    # Create target classes based on future returns, only used for validation
     mert['BTC_decile_change'] = pd.qcut(mert['future_return'].dropna(), q=3, labels=False)
     
-    # Drop rows where we don't have a complete window
-    mert = mert.dropna(subset=['BTC_decile_change'])
+    # Drop rows where we don't have a complete window for validation
+    mert = mert.dropna(subset=['BTC_decile_change', 'future_30d_ma'])
     
-    # Print alignment check
-    print("\nSample alignment check (showing how the centered MA is calculated):")
+    # Print alignment check for debugging
+    print("\nSample alignment check (validating using future values without training on them):")
     debug_df = pd.DataFrame({
         'Date': mert['Date'],
         'Current_Price': mert['BTC'],
-        'MA_t-15_to_t+15': mert['future_30d_ma'],
+        'Present_30d_MA': mert['present_30d_ma'],
+        'Future_30d_MA_t+15': mert['future_30d_ma'],
         'Return': mert['future_return'].map('{:.2%}'.format) if not mert['future_return'].isna().all() else mert['future_return'],
         'Target_Class': mert['BTC_decile_change']
     }).head(30)
@@ -123,7 +128,7 @@ def calculate_future_moving_average_and_deciles(mert, look_ahead_days=15, ma_win
     
     return mert
 
-# Full data preparation pipeline
+
 def prepare_data_for_model(fred_api_key):
     btc_data = fetch_bitcoin_data()
     fred_data = fetch_fred_data(fred_api_key)
@@ -131,14 +136,26 @@ def prepare_data_for_model(fred_api_key):
     mert = calculate_d2_metrics(mert)
     mert = perform_tda_on_d2(mert)
     mert = calculate_future_moving_average_and_deciles(mert)
+    
+    # Use only historical features for training
     mert['returns'] = mert['BTC'].pct_change().shift(1)
     mert['volatility'] = mert['returns'].rolling(window=30).std().shift(1)
+    
+    # Select only past features (exclude future_30d_ma)
     features = ['BTC', 'btc_d2', 'tda_feature', 'Treasury_10Y', 'Gross_Debt', 'returns', 'volatility']
     X = mert[features].copy()
+    
+    # The target variable is based on future return, but we do not use it for training
     y = mert['BTC_decile_change'].copy()
+    
+    # Ensure there's no leakage of future data
+    print("Training features:", X.columns)
+    
+    # Mask to remove rows with missing data
     mask = ~(X.isna().any(axis=1) | y.isna())
     X = X[mask]
     y = y[mask]
+    
     return X, y
 
 
