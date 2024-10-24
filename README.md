@@ -1,4 +1,9 @@
-# Repository
+# Macroeconomic Effects on Bitcoin Price Using Topological Data Analysis and Distance-to-Default Metrics
+
+# Abstract
+In this report, we explore the application of Topological Data Analysis (TDA) and financial risk metrics such as the Merton Distance-to-Default (DTD), adapted slightly here, in predicting Bitcoin price quantiles (n=3). Using daily data from Yahoo Finance and FRED, we build a machine learning model that integrates both financial and geometric features. In this study, the target variable is the 30-day moving average of Bitcoin's price, calculated from t-15 to t+15. This target metric captures smoothed price behavior by taking into account both past and future price movements, offering a more stable projection of Bitcoin's price trends. By using this 30-day moving average as a target, the model is able to reduce the impact of short-term volatility, allowing for more stable predictions of medium-term price movements. This approach is particularly beneficial in highly volatile markets like Bitcoin, where daily fluctuations can introduce noise into the predictive process. The analysis leverages Topological Data Analysis (TDA) and financial metrics such as Distance-to-Default (D2D) to enhance the predictive accuracy, offering a more robust understanding of Bitcoin's price behavior under macroeconomic influences. The model is trained using XGBoost with hyperparameter optimization through Bayesian search, achieving an accuracy of 51.62\% (which is greater than 33.33\% probability for random guessing over three quantiles) and an AUC score of 0.587. To better understand the model's performance, we evaluate entropy per class and plot the confusion matrix, as well as predicted vs actual values over time.
+
+# Repository 
 
 For full access to the code and related files for this project, please
 visit the GitHub repository at:
@@ -69,8 +74,8 @@ the Federal Reserve Economic Data (FRED) API. The two primary economic
 indicators used were the 10-Year Treasury Yield and the U.S. Gross
 Federal Debt. These metrics reflect the cost of borrowing and the
 nation's financial obligations, respectively, both of which could
-influence investor behavior in cryptocurrency markets.These factors were
-hypothesized to have an impact on Bitcoin's price due to their
+influence investor behavior in cryptocurrency markets. These factors
+were hypothesized to have an impact on Bitcoin's price due to their
 reflection of macroeconomic conditions:
 
     fred = Fred(api_key=fred_api_key)
@@ -166,18 +171,87 @@ the following features:
 
 # Target Variable: 30-Day Moving Average with 15-Day Lookahead
 
+In this study, the target variable is based on a centered moving average
+to represent Bitcoin's price trends over a medium-term window. The
+target variable is calculated as the 30-day moving average, centered
+between $t-15$ and $t+15$, where $t=0$ represents the current time. It
+is important to emphasize that this moving average is only used as a
+target for prediction purposes and is not used directly by the model as
+an input feature.
+
+The primary reason for choosing this target variable is to reduce the
+noise from daily price fluctuations while providing a balanced outlook
+on price trends over the next 30 days. By calculating the moving average
+centered on both past ($t-15$) and future ($t+15$) data, this target
+offers a more stable representation of Bitcoin's price trend, helping to
+smooth out volatility and better inform the model's predictions.
+
 The lookahead window anticipates future price changes, which is
-especially valuable in highly volatile markets like Bitcoin. This
-approach offers a balanced method for forecasting near-term trends while
-mitigating noise from daily fluctuations.
+especially valuable in highly volatile markets like Bitcoin. However,
+the centered moving average does not introduce lookahead bias because it
+is used solely as the target for the model to learn to predict, based on
+historical data up to time $t$.
+
+The following Python function demonstrates how the target variable is
+constructed:
+
+``` {.Python breaklines=""}
+def calculate_future_moving_average_and_deciles(mert, look_ahead_days=15, ma_window=30):
+    """
+    Calculate target variable based on centered returns.
+    At time t=0, the target is based on the moving average from t-15 to t+15.
+    """
+    # Calculate the centered moving average directly
+    mert['future_30d_ma'] = mert['BTC'].rolling(window=ma_window, center=True).mean()
+    
+    # Calculate returns relative to current price
+    mert['current_price'] = mert['BTC']
+    mert['future_return'] = (mert['future_30d_ma'] - mert['current_price']) / mert['current_price']
+    
+    # Create target classes based on future returns
+    mert['BTC_decile_change'] = pd.qcut(mert['future_return'].dropna(), q=3, labels=False)
+    
+    # Drop rows where we don't have a complete window
+    mert = mert.dropna(subset=['BTC_decile_change'])
+    
+    # Print alignment check
+    print("\nSample alignment check (showing how the centered MA is calculated):")
+    debug_df = pd.DataFrame({
+        'Date': mert['Date'],
+        'Current_Price': mert['BTC'],
+        'MA_t-15_to_t+15': mert['future_30d_ma'],
+        'Return': mert['future_return'].map('{:.2%}'.format) if not mert['future_return'].isna().all() else mert['future_return'],
+        'Target_Class': mert['BTC_decile_change']
+    }).head(30)
+    print(debug_df.to_string(index=False))
+    
+    print("\nTarget class distribution:")
+    print(mert['BTC_decile_change'].value_counts())
+    
+    return mert
+```
+
+This function constructs the target variable by calculating a centered
+moving average over a 30-day window from $t-15$ to $t+15$, creating a
+more stable price signal. The function also computes the future return
+as the percentage difference between the current price and the centered
+moving average. Based on these future returns, we assign each time step
+to one of three quantiles (low/negative, medium, or high returns),
+creating the 'BTC_decile_change' classification that serves as the
+target for model prediction.
+
+This target construction helps the model focus on medium-term trends
+while effectively smoothing out daily volatility. The target variable
+does not directly feed into the model, but instead, it guides the model
+to predict future price trends based on past and present data.
 
 # Model Training and Optimization
 
 ## Model Setup
 
-We used the XGBoost model to classify Bitcoin price changes into deciles
-(0, 1, 2). The model was trained with Bayesian search over the following
-parameter space:
+We used the XGBoost model to classify Bitcoin price changes into three
+quantiles (0, 1, 2). The model was trained with Bayesian search over the
+following parameter space:
 
     search_space = {
         'n_estimators': Integer(50, 300),
@@ -203,81 +277,72 @@ understand how well the model performed on each class.
 ## Confusion Matrix
 
 ![Confusion Matrix for Predicted vs Actual
-Classes](confusion.png){#fig:confusion_matrix width="80%"}
+Classes](confusion2.png){#fig:confusion_matrix width="80%"}
 
 The matrix compares the actual classes (on the vertical axis) against
-the predicted classes (on the horizontal axis). A perfect classification
-model would have all non-zero values along the diagonal of the matrix,
-indicating that every predicted class matches the actual class. However,
-off-diagonal elements indicate misclassifications, where the model has
-predicted the wrong class.
+the predicted classes (on the horizontal axis). Ideally, all predictions
+should align with the diagonal, indicating that every predicted class
+matches the actual class. Misclassifications appear off-diagonal.
 
 #### Class 0:
 
-The model performs particularly well for class 0, with 693 correct
-predictions. However, there are still 84 instances where the model
-incorrectly classified class 0 as class 1, and 42 instances where class
-0 was misclassified as class 2. This suggests that the model
-occasionally struggles to differentiate class 0 from adjacent classes,
-particularly class 1. Despite this, the majority of predictions for
-class 0 are correct.
+The model predicted class 0 correctly 466 times, though it misclassified
+191 instances as class 1 and 167 as class 2. This highlights that while
+the model performs decently for class 0, it occasionally struggles to
+separate it from other classes, especially class 1.
 
 #### Class 1:
 
-Class 1 poses more challenges for the model. While 617 instances were
-correctly classified, there were 101 cases misclassified as class 0, and
-113 misclassified as class 2. The confusion between class 1 and class 2
-indicates that the model has difficulty distinguishing these two
-classes. This could be due to similarities in price movement patterns
-between these deciles, leading to greater overlap in the feature space.
+The model predicted class 1 correctly 413 times but misclassified 216
+instances as class 0 and 195 as class 2. Class 1 shows a higher level of
+misclassification, likely due to overlap in patterns between class 1 and
+neighboring quantiles.
 
 #### Class 2:
 
-For class 2, the model correctly predicted 692 instances, but 107 cases
-were incorrectly predicted as class 1, and 32 instances as class 0. The
-confusion between classes 1 and 2 further highlights the difficulty the
-model faces in clearly differentiating between these two deciles.
-However, class 2 is relatively well separated from class 0, with a low
-misclassification rate of just 32 instances.
+For class 2, the model correctly predicted 395 instances, but
+misclassified 236 as class 1 and 189 as class 0. This reinforces the
+confusion between classes 1 and 2 but demonstrates a relatively strong
+performance in separating class 2 from class 0.
 
-Overall, while the model achieves a high level of accuracy, the
-confusion matrix highlights areas where further improvements can be
-made. Enhancing the feature set or using more advanced techniques, such
-as additional regularization or ensemble models, could help address
-these misclassification issues.
+Overall, the confusion matrix shows that while the model captures
+certain patterns, especially for class 0, there is significant
+misclassification between classes 1 and 2. This could be mitigated by
+enhancing feature engineering or adjusting the model's hyperparameters.
 
 ## Predicted vs Actual Over Time
 
 Figure [2](#fig:predicted_vs_actual){reference-type="ref"
-reference="fig:predicted_vs_actual"} plots the predicted class labels
-against the actual class labels over time. The model predictions closely
-follow the actual class changes, though there are instances of mismatch,
-particularly during periods of high volatility.
+reference="fig:predicted_vs_actual"} compares the predicted and actual
+class labels over time. While the predicted labels generally track the
+actual labels, there are several periods where the predicted values
+deviate, especially during higher volatility intervals.
 
 ![Predicted vs Actual Values Over
-Time](predicted.png){#fig:predicted_vs_actual width="80%"}
+Time](predicted2.png){#fig:predicted_vs_actual width="80%"}
 
 ## Entropy per Class
 
 In Figure [3](#fig:entropy_per_class){reference-type="ref"
 reference="fig:entropy_per_class"}, the mean entropy values per class
-are presented. Higher entropy for class 1.0 indicates that the model is
-less confident when predicting this class, suggesting a need for further
-refinement.
+are presented. Class 0.0, 1.0, and 2.0 show relatively high and uniform
+entropy levels, indicating the model's uncertainty in predicting each
+class. These findings suggest the need for further refinements,
+particularly to increase the model's confidence in predicting class 1.0.
 
-![Mean Entropy per Class](entropy.png){#fig:entropy_per_class
+![Mean Entropy per Class](entropy2.png){#fig:entropy_per_class
 width="80%"}
 
 # Conclusion
 
-The integration of Topological Data Analysis with financial metrics,
-such as Distance-to-Default, demonstrates the potential to improve
-Bitcoin price forecasting. While the model achieves reasonable accuracy,
-further refinements in feature engineering and regularization could lead
-to higher confidence and reduced entropy, particularly in class 1.0.
-Future research could explore more sophisticated geometric descriptors
-and the inclusion of additional macroeconomic factors to improve
-predictive performance.
+This study integrates Topological Data Analysis (TDA) with macroeconomic
+metrics, demonstrating potential for improving Bitcoin price prediction.
+Despite achieving modest accuracy and AUC scores, the results highlight
+areas for improvement, particularly in reducing misclassifications
+between classes 1 and 2 and addressing the model's overall uncertainty.
+Further research could refine the model by incorporating additional
+macroeconomic features and improving the regularization strategy to
+lower entropy and enhance predictive performance.
 
 ::: thebibliography
 9 Merton, R. C. (1974). On the Pricing of Corporate Debt: The Risk
