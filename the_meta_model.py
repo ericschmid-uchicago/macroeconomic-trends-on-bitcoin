@@ -89,11 +89,38 @@ def perform_tda_on_d2(mert, window_size=30, stride=1):
     print(f"Sample of TDA features:\n{mert[['tda_feature']].tail()}")
     return mert
 
-# Prepare data
 def calculate_future_moving_average_and_deciles(mert, look_ahead_days=15, ma_window=30):
-    mert['future_returns'] = mert['BTC'].pct_change(periods=look_ahead_days).shift(-look_ahead_days)
-    mert['BTC_decile_change'] = pd.qcut(mert['future_returns'], q=3, labels=False)
+    """
+    Calculate target variable based on centered returns.
+    At time t=0, the target is based on the moving average from t-15 to t+15.
+    """
+    # Calculate the centered moving average directly
+    mert['future_30d_ma'] = mert['BTC'].rolling(window=ma_window, center=True).mean()
+    
+    # Calculate returns relative to current price
+    mert['current_price'] = mert['BTC']
+    mert['future_return'] = (mert['future_30d_ma'] - mert['current_price']) / mert['current_price']
+    
+    # Create target classes based on future returns
+    mert['BTC_decile_change'] = pd.qcut(mert['future_return'].dropna(), q=3, labels=False)
+    
+    # Drop rows where we don't have a complete window
     mert = mert.dropna(subset=['BTC_decile_change'])
+    
+    # Print alignment check
+    print("\nSample alignment check (showing how the centered MA is calculated):")
+    debug_df = pd.DataFrame({
+        'Date': mert['Date'],
+        'Current_Price': mert['BTC'],
+        'MA_t-15_to_t+15': mert['future_30d_ma'],
+        'Return': mert['future_return'].map('{:.2%}'.format) if not mert['future_return'].isna().all() else mert['future_return'],
+        'Target_Class': mert['BTC_decile_change']
+    }).head(30)
+    print(debug_df.to_string(index=False))
+    
+    print("\nTarget class distribution:")
+    print(mert['BTC_decile_change'].value_counts())
+    
     return mert
 
 # Full data preparation pipeline
@@ -217,7 +244,7 @@ def plot_confusion_matrix(y_true, y_pred, labels):
     plt.show()
 
 if __name__ == "__main__":
-    fred_api_key = 'your_API_key'   # Replace with your FRED API key
+    fred_api_key = 'e27aeafdd08f0e92830315de82579e94'   # Replace with your FRED API key
     X, y = prepare_data_for_model(fred_api_key)
 
     # Train the model using GP tuning
@@ -250,4 +277,3 @@ if __name__ == "__main__":
     # Plot confusion matrix
     plot_confusion_matrix(y, y_pred, labels)
     
-
