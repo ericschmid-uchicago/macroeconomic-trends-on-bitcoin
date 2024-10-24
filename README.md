@@ -1,4 +1,4 @@
-# Repository {#repository .unnumbered}
+# Repository
 
 For full access to the code and related files for this project, please
 visit the GitHub repository at:
